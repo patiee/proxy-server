@@ -29,7 +29,7 @@ func main() {
 	}
 
 	// Create new proxy server with upstream configuration
-	proxy, err := server.NewProxyServer(conf.Port, conf.Via, conf.Upstream, conf.Timeout)
+	proxy, err := server.NewProxyServer(conf)
 	if err != nil {
 		log.Fatalf("Failed to create proxy server: %v", err)
 	}

@@ -18,10 +18,13 @@ type UpstreamConfig struct {
 
 // Config holds the proxy configuration.
 type Config struct {
-	Port     string
-	Via      *string
-	Upstream *UpstreamConfig
-	Timeout  *int // Global client timeout in seconds
+	Port               string
+	Via                *string
+	Upstream           *UpstreamConfig
+	Timeout            *int // Global client timeout in seconds
+	CaCertPath         *string
+	CaKeyPath          *string
+	InsecureSkipVerify *bool
 }
 
 // LoadConfig loads configuration from .env file or environment variables.
@@ -46,6 +49,22 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
+	var caCertPath *string
+	if v, ok := os.LookupEnv("PROXY_CA_CERT"); ok {
+		caCertPath = &v
+	}
+	var caKeyPath *string
+	if v, ok := os.LookupEnv("PROXY_CA_KEY"); ok {
+		caKeyPath = &v
+	}
+
+	var insecureSkipVerify *bool
+	if v, ok := os.LookupEnv("PROXY_INSECURE_SKIP_VERIFY"); ok {
+		if b, err := strconv.ParseBool(v); err == nil {
+			insecureSkipVerify = &b
+		}
+	}
+
 	var upstream *UpstreamConfig
 	if v, ok := os.LookupEnv("PROXY_UPSTREAM_URL"); ok {
 		if upstream == nil {
@@ -67,18 +86,24 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &Config{
-		Port:     port,
-		Via:      via,
-		Upstream: upstream,
-		Timeout:  timeout,
+		Port:               port,
+		Via:                via,
+		Upstream:           upstream,
+		Timeout:            timeout,
+		CaCertPath:         caCertPath,
+		CaKeyPath:          caKeyPath,
+		InsecureSkipVerify: insecureSkipVerify,
 	}, nil
 }
 
 type JsonConfig struct {
-	Port     string              `json:"port"`
-	Via      *string             `json:"via"`
-	Upstream *JsonUpstreamConfig `json:"upstream"`
-	Timeout  *int                `json:"timeout"`
+	Port               string              `json:"port"`
+	Via                *string             `json:"via"`
+	Upstream           *JsonUpstreamConfig `json:"upstream"`
+	Timeout            *int                `json:"timeout"`
+	CaCertPath         *string             `json:"ca_cert_path"`
+	CaKeyPath          *string             `json:"ca_key_path"`
+	InsecureSkipVerify *bool               `json:"insecure_skip_verify"`
 }
 
 type JsonUpstreamConfig struct {
@@ -98,9 +123,12 @@ func LoadConfigJson(data []byte) (*Config, error) {
 	}
 
 	config := &Config{
-		Port:    conf.Port,
-		Via:     conf.Via,
-		Timeout: conf.Timeout,
+		Port:               conf.Port,
+		Via:                conf.Via,
+		Timeout:            conf.Timeout,
+		CaCertPath:         conf.CaCertPath,
+		CaKeyPath:          conf.CaKeyPath,
+		InsecureSkipVerify: conf.InsecureSkipVerify,
 	}
 
 	if conf.Upstream != nil {

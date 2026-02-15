@@ -46,7 +46,7 @@ func main() {
 	}
 
 	// Create new proxy server
-	proxy, err := server.NewProxyServer(config.Port, config.Via, config.Upstream, config.Timeout)
+	proxy, err := server.NewProxyServer(config)
 	if err != nil {
 		log.Fatalf("Failed to create proxy server: %v", err)
 	}
