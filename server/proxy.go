@@ -4,34 +4,27 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 )
 
-// PrivacyLevel defines the level of privacy for the proxy.
-type PrivacyLevel int
-
-const (
-	// Transparent: The proxy forwards the client's IP address.
-	Transparent PrivacyLevel = iota
-	// Anonymous: The proxy hides the client's IP address but identifies itself as a proxy.
-	Anonymous
-	// Elite: The proxy hides the client's IP address and does not identify itself as a proxy.
-	Elite
-)
-
-// ProxyServer represents a proxy server with a specific privacy level.
+// ProxyServer represents a proxy server.
 type ProxyServer struct {
-	PrivacyLevel PrivacyLevel
-	Port         string
+	Port    string
+	Via     *string
+	Filters []func(*http.Request)
 }
 
 // NewProxyServer creates a new ProxyServer with the given configuration.
-func NewProxyServer(privacyLevel PrivacyLevel, port string) *ProxyServer {
+func NewProxyServer(port string, via *string) *ProxyServer {
 	return &ProxyServer{
-		PrivacyLevel: privacyLevel,
-		Port:         port,
+		Port: port,
+		Via:  via,
 	}
+}
+
+// ApplyFilter adds a filter function to the proxy server.
+func (p *ProxyServer) ApplyFilter(f func(*http.Request)) {
+	p.Filters = append(p.Filters, f)
 }
 
 // ServeHTTP handles the proxy requests.
@@ -65,8 +58,15 @@ func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	// Apply privacy settings
-	p.applyPrivacy(r)
+	// Apply all filters
+	for _, f := range p.Filters {
+		f(r)
+	}
+
+	// Set Via header if configured
+	if p.Via != nil {
+		r.Header.Set("Via", *p.Via)
+	}
 
 	// Create a new request to forward
 	outReq := new(http.Request)
@@ -89,30 +89,6 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	copyHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
-}
-
-// applyPrivacy modifies the request headers based on the privacy level.
-func (p *ProxyServer) applyPrivacy(r *http.Request) {
-	clientIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-
-	// Handle X-Forwarded-For
-	if p.PrivacyLevel == Transparent {
-		if prior, ok := r.Header["X-Forwarded-For"]; ok {
-			clientIP = strings.Join(prior, ", ") + ", " + clientIP
-		}
-		r.Header.Set("X-Forwarded-For", clientIP)
-	} else {
-		// Anonymous and Elite: Remove X-Forwarded-For
-		r.Header.Del("X-Forwarded-For")
-	}
-
-	// Handle Via
-	if p.PrivacyLevel == Elite {
-		r.Header.Del("Via")
-	} else {
-		// Transparent and Anonymous: Set Via
-		r.Header.Set("Via", "1.1 "+p.Port)
-	}
 }
 
 func transfer(destination io.WriteCloser, source io.ReadCloser) {

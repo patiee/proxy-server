@@ -1,37 +1,106 @@
 package server_test
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/patiee/proxy/server"
 )
 
-func TestPrivacyLevels(t *testing.T) {
+func TestProxyHeaders(t *testing.T) {
+	defaultVia := "1.1 8080"
+	customVia := "proxy-server-v1.0.0 1.1.1.1:8080"
+
+	// Define a custom filter function
+	addHeaderFilter := func(r *http.Request) {
+		r.Header.Set("X-Filtered", "true")
+	}
+
+	// Define X-Forwarded-For filter
+	xffFilter := func(r *http.Request) {
+		clientIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if prior, ok := r.Header["X-Forwarded-For"]; ok {
+			clientIP = strings.Join(prior, ", ") + ", " + clientIP
+		}
+		r.Header.Set("X-Forwarded-For", clientIP)
+	}
+
 	tests := []struct {
-		name         string
-		privacyLevel server.PrivacyLevel
-		expectVia    bool
-		expectXFF    bool
+		name               string
+		viaConfig          *string
+		filterConfigs      []func(*http.Request)
+		headersToSet       map[string]string
+		expectVia          bool
+		expectedVia        string
+		expectXFF          bool
+		expectFilter       bool
+		expectSecondFilter bool
 	}{
 		{
-			name:         "Transparent",
-			privacyLevel: server.Transparent,
-			expectVia:    true,
-			expectXFF:    true,
+			name:          "Standard Proxy Behavior (Default Via = nil)",
+			viaConfig:     nil,
+			filterConfigs: []func(*http.Request){xffFilter},
+			headersToSet:  map[string]string{"X-Before": "test"},
+			expectVia:     false,
+			expectXFF:     true,
+			expectFilter:  false,
 		},
 		{
-			name:         "Anonymous",
-			privacyLevel: server.Anonymous,
-			expectVia:    true,
-			expectXFF:    false,
+			name:          "Configured Via Header",
+			viaConfig:     &defaultVia,
+			filterConfigs: []func(*http.Request){xffFilter},
+			headersToSet:  map[string]string{"X-Before": "test"},
+			expectVia:     true,
+			expectedVia:   defaultVia,
+			expectXFF:     true,
+			expectFilter:  false,
 		},
 		{
-			name:         "Elite",
-			privacyLevel: server.Elite,
-			expectVia:    false,
-			expectXFF:    false,
+			name:          "Custom Via Header",
+			viaConfig:     &customVia,
+			filterConfigs: []func(*http.Request){xffFilter},
+			headersToSet:  map[string]string{"X-Before": "test"},
+			expectVia:     true,
+			expectedVia:   customVia,
+			expectXFF:     true,
+			expectFilter:  false,
+		},
+		{
+			name:          "Appends XFF",
+			viaConfig:     nil,
+			filterConfigs: []func(*http.Request){xffFilter},
+			headersToSet:  map[string]string{"X-Forwarded-For": "1.2.3.4"},
+			expectVia:     false,
+			expectXFF:     true,
+			expectFilter:  false,
+		},
+		{
+			name:          "Custom Request Filter",
+			viaConfig:     nil,
+			filterConfigs: []func(*http.Request){xffFilter, addHeaderFilter},
+			headersToSet:  map[string]string{"X-Before": "test"},
+			expectVia:     false,
+			expectXFF:     true,
+			expectFilter:  true,
+		},
+		{
+			name:      "Multiple Filters",
+			viaConfig: nil,
+			filterConfigs: []func(*http.Request){
+				xffFilter,
+				addHeaderFilter,
+				func(r *http.Request) {
+					r.Header.Set("X-Second-Filter", "working")
+				},
+			},
+			headersToSet:       map[string]string{"X-Before": "test"},
+			expectVia:          false,
+			expectXFF:          true,
+			expectFilter:       true,
+			expectSecondFilter: true,
 		},
 	}
 
@@ -45,6 +114,8 @@ func TestPrivacyLevels(t *testing.T) {
 				if tt.expectVia {
 					if r.Header.Get("Via") == "" {
 						t.Errorf("Backend expected Via header, got none")
+					} else if r.Header.Get("Via") != tt.expectedVia {
+						t.Errorf("Backend expected Via header %s, got %s", tt.expectedVia, r.Header.Get("Via"))
 					}
 				} else {
 					if r.Header.Get("Via") != "" {
@@ -57,24 +128,45 @@ func TestPrivacyLevels(t *testing.T) {
 					if r.Header.Get("X-Forwarded-For") == "" {
 						t.Errorf("Backend expected X-Forwarded-For header, got none")
 					}
-				} else {
-					if r.Header.Get("X-Forwarded-For") != "" {
-						t.Errorf("Backend expected no X-Forwarded-For header, got %s", r.Header.Get("X-Forwarded-For"))
+					// If we sent one, it should contain it
+					if val, ok := tt.headersToSet["X-Forwarded-For"]; ok {
+						if !strings.Contains(r.Header.Get("X-Forwarded-For"), val) {
+							t.Errorf("Backend expected XFF to contain %s, got %s", val, r.Header.Get("X-Forwarded-For"))
+						}
 					}
 				}
+
+				// Check Filter effect
+				if tt.expectFilter {
+					if r.Header.Get("X-Filtered") != "true" {
+						t.Errorf("Backend expected X-Filtered header, got none")
+					}
+				}
+
+				// Check Second Filter effect
+				if tt.expectSecondFilter {
+					if r.Header.Get("X-Second-Filter") != "working" {
+						t.Errorf("Backend expected X-Second-Filter header, got none")
+					}
+				}
+
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer backend.Close()
 
-			proxyServer := server.NewProxyServer(tt.privacyLevel, "8080")
+			proxyServer := server.NewProxyServer("8080", tt.viaConfig)
+
+			for _, filter := range tt.filterConfigs {
+				proxyServer.ApplyFilter(filter)
+			}
 
 			// Create a request to the backend through the proxy
 			req := httptest.NewRequest("GET", backend.URL, nil)
 			req.RemoteAddr = "127.0.0.1:1234"
 
-			// Simulate previous proxy if testing Transparent
-			if tt.privacyLevel == server.Transparent {
-				req.Header.Set("X-Forwarded-For", "192.168.1.1")
+			// Set headers
+			for k, v := range tt.headersToSet {
+				req.Header.Set(k, v)
 			}
 
 			w := httptest.NewRecorder()

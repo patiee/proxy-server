@@ -4,51 +4,42 @@ import (
 	"testing"
 
 	"github.com/patiee/proxy/config"
-	"github.com/patiee/proxy/server"
 )
 
 func TestLoadConfigJson(t *testing.T) {
+	defaultViaConf := "1.1 8080"
 	tests := []struct {
 		name         string
 		input        string
 		expectedPort string
-		expectedPL   server.PrivacyLevel
+		expectedVia  *string
 		shouldError  bool
 	}{
 		{
-			name:         "Valid Transparent",
-			input:        `{"port": "9090", "privacy_level": "transparent"}`,
+			name:         "Valid Config",
+			input:        `{"port": "9090"}`,
 			expectedPort: "9090",
-			expectedPL:   server.Transparent,
+			expectedVia:  nil,
 			shouldError:  false,
 		},
 		{
-			name:         "Valid Anonymous",
-			input:        `{"port": "8081", "privacy_level": "anonymous"}`,
-			expectedPort: "8081",
-			expectedPL:   server.Anonymous,
-			shouldError:  false,
-		},
-		{
-			name:         "Valid Elite",
-			input:        `{"port": "8082", "privacy_level": "elite"}`,
-			expectedPort: "8082",
-			expectedPL:   server.Elite,
-			shouldError:  false,
-		},
-		{
-			name:         "Default Port and Privacy",
+			name:         "Default Port",
 			input:        `{}`,
 			expectedPort: "8080",
-			expectedPL:   server.Transparent,
+			expectedVia:  nil,
 			shouldError:  false,
 		},
 		{
-			name:         "Invalid JSON",
-			input:        `{invalid js`,
-			expectedPort: "",
-			expectedPL:   server.Transparent,
-			shouldError:  true,
+			name:         "Configured Via",
+			input:        `{"port": "8081", "via": "1.1 8080"}`,
+			expectedPort: "8081",
+			expectedVia:  &defaultViaConf,
+			shouldError:  false,
+		},
+		{
+			name:        "Invalid JSON",
+			input:       `{invalid js`,
+			shouldError: true,
 		},
 	}
 
@@ -69,8 +60,10 @@ func TestLoadConfigJson(t *testing.T) {
 				t.Errorf("Expected port %s, got %s", tt.expectedPort, cfg.Port)
 			}
 
-			if cfg.PrivacyLevel != tt.expectedPL {
-				t.Errorf("Expected privacy level %d, got %d", tt.expectedPL, cfg.PrivacyLevel)
+			if (cfg.Via == nil && tt.expectedVia != nil) || (cfg.Via != nil && tt.expectedVia == nil) {
+				t.Errorf("Expected Via %v, got %v", tt.expectedVia, cfg.Via)
+			} else if cfg.Via != nil && tt.expectedVia != nil && *cfg.Via != *tt.expectedVia {
+				t.Errorf("Expected Via %s, got %s", *tt.expectedVia, *cfg.Via)
 			}
 		})
 	}
