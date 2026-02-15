@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"os"
+
 	"github.com/patiee/proxy/config"
 	"github.com/patiee/proxy/server"
 )
@@ -21,14 +23,22 @@ func xffFilter(r *http.Request) {
 }
 
 func main() {
-	// Load configuration
-	config, err := config.LoadConfig()
+	// Load configuration from JSON file
+	configData, err := os.ReadFile("config.json")
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		log.Fatalf("Failed to read config file: %v", err)
+	}
+
+	config, err := config.LoadConfigJson(configData)
+	if err != nil {
+		log.Fatalf("Failed to parse config: %v", err)
 	}
 
 	// Create new proxy server
-	proxy := server.NewProxyServer(config.Port, config.Via, config.Upstream)
+	proxy, err := server.NewProxyServer(config.Port, config.Via, config.Upstream)
+	if err != nil {
+		log.Fatalf("Failed to create proxy server: %v", err)
+	}
 
 	// Apply the X-Forwarded-For filter
 	proxy.ApplyFilter(xffFilter)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/patiee/proxy/config"
 	"github.com/patiee/proxy/server"
 )
 
@@ -31,6 +32,7 @@ func TestProxyHeaders(t *testing.T) {
 	tests := []struct {
 		name               string
 		viaConfig          *string
+		upstreamConfig     *config.UpstreamConfig
 		filterConfigs      []func(*http.Request)
 		headersToSet       map[string]string
 		expectVia          bool
@@ -102,6 +104,16 @@ func TestProxyHeaders(t *testing.T) {
 			expectFilter:       true,
 			expectSecondFilter: true,
 		},
+		{
+			name:           "Upstream Proxy Chaining",
+			viaConfig:      nil,
+			upstreamConfig: &config.UpstreamConfig{URL: "mock_upstream", Timeout: func() *int { i := 10; return &i }()},
+			filterConfigs:  []func(*http.Request){xffFilter},
+			headersToSet:   map[string]string{"X-Before": "test"},
+			expectVia:      false,
+			expectXFF:      false, // Upstream mock doesn't forward to backend in test logic above, so backend logic skipped
+			expectFilter:   false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -154,7 +166,37 @@ func TestProxyHeaders(t *testing.T) {
 			}))
 			defer backend.Close()
 
-			proxyServer := server.NewProxyServer("8080", tt.viaConfig)
+			var upstream *httptest.Server
+			// var upstreamURL string
+			if tt.upstreamConfig != nil && tt.upstreamConfig.URL == "mock_upstream" {
+				upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// Verify upstream received the request
+					t.Logf("Upstream received request: %s %s", r.Method, r.URL.String())
+
+					if r.Method == http.MethodConnect {
+						w.WriteHeader(http.StatusOK)
+						return
+					}
+
+					// Check if target is backend
+					if !strings.Contains(r.URL.String(), backend.URL) && !strings.Contains(backend.URL, r.URL.String()) {
+						t.Errorf("Upstream expected target %s, got %s", backend.URL, r.URL.String())
+					}
+
+					// Imitate successful proxying by just returning OK from upstream
+					w.WriteHeader(http.StatusOK)
+				}))
+				defer upstream.Close()
+
+				// Parse host:port from upstream.URL
+				// Ensure we pass the full URL with scheme as per new requirement
+				tt.upstreamConfig.URL = upstream.URL
+			}
+
+			proxyServer, err := server.NewProxyServer("8080", tt.viaConfig, tt.upstreamConfig)
+			if err != nil {
+				t.Fatalf("Failed to create proxy server: %v", err)
+			}
 
 			for _, filter := range tt.filterConfigs {
 				proxyServer.ApplyFilter(filter)

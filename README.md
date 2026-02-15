@@ -1,20 +1,51 @@
 # Proxy Library
 
-A flexible HTTP/HTTPS proxy library for Go, supporting multiple privacy levels. This library allows you to easily embed a proxy server into your application with configurable anonymity settings.
+A flexible HTTP/HTTPS proxy library for Go, supporting request filtering, upstream chaining, and configurable headers.
 
 ## Features
 
 -   **HTTP & HTTPS Support**: Handles standard HTTP requests and HTTPS tunneling (via CONNECT).
--   **Privacy Levels**:
-    -   **Transparent**: Forwards client IP in `X-Forwarded-For`.
-    -   **Anonymous**: Hides client IP, identifies as a proxy via `Via` header.
-    -   **Elite**: Hides client IP and does not identify as a proxy.
--   **Configurable**: Load configuration from environment variables, `.env` files, or JSON data.
+-   **Configurable Headers**:
+    -   **Via Header**: Optional `Via` header support (appends if exists).
+-   **Request Filtering**:
+    -   **Multiple Filters**: Chainable request filters using `ApplyFilter`.
+    -   **Custom Logic**: Easily implement things like `X-Forwarded-For` or custom header manipulation.
+-   **Proxy Chaining**:
+    -   **Upstream Proxy**: Forward requests to another proxy (HTTP forwarding and HTTPS tunneling).
+    -   **Validation**: Enforces valid `http://` or `https://` schemes for upstream URLs.
+-   **Configuration**:
+    -   Load from environment variables, `.env` files, or JSON.
 
 ## Installation
 
 ```bash
 go get github.com/patiee/proxy
+```
+
+## Configuration
+
+Configuration can be loaded from environment variables or a JSON file.
+
+### Environment Variables
+
+| Variable | Description | Required | Example |
+|---|---|---|---|
+| `PROXY_PORT` | Port to listen on | **Yes** | `8080` |
+| `PROXY_VIA` | Value for `Via` header | No | `proxy-server-v1.0.0 [IP_ADDRESS]:[PORT]` |
+| `PROXY_UPSTREAM_URL` | Upstream proxy URL (specific) | No | `http://localhost:9090` |
+| `PROXY_UPSTREAM_TIMEOUT` | Upstream timeout in seconds | No | `10` |
+
+### JSON Configuration
+
+```json
+{
+  "port": "8080",
+  "via": "proxy-server-v1.0.0 [IP_ADDRESS]:[PORT]",
+  "upstream": {
+    "url": "http://localhost:9090",
+    "timeout": 10
+  }
+}
 ```
 
 ## Usage
@@ -28,75 +59,66 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/patiee/proxy/config"
 	"github.com/patiee/proxy/server"
 )
 
 func main() {
-	// Create a proxy server with desired privacy level
-	// Options: server.Transparent, server.Anonymous, server.Elite
-	srv := server.NewProxyServer(server.Elite, "8080")
+	// Load config
+	conf, err := config.LoadConfig() // or LoadConfigJson(bytes)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	log.Println("Starting proxy on :8080")
-	if err := http.ListenAndServe(":8080", srv); err != nil {
+	// Create proxy server
+	srv, err := server.NewProxyServer(conf.Port, conf.Via, conf.Upstream)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("Starting proxy on :%s", conf.Port)
+	if err := http.ListenAndServe(":"+conf.Port, srv); err != nil {
 		log.Fatal(err)
 	}
 }
 ```
 
-### Loading Configuration
+### Adding Filters (e.g., X-Forwarded-For)
 
-You can use the `config` package to load settings from environment variables or JSON.
+`X-Forwarded-For` is **not** added by default. You can add it using a filter:
 
-**From Environment (.env):**
 ```go
-import "github.com/patiee/proxy/config"
-
-cfg, err := config.LoadConfig()
-if err != nil {
-    // handle error
+// Define filter
+func xffFilter(r *http.Request) {
+    // ... implementation ...
+    r.Header.Set("X-Forwarded-For", clientIP)
 }
-srv := server.NewProxyServer(cfg.PrivacyLevel, cfg.Port)
+
+// Apply filter
+srv.ApplyFilter(xffFilter)
 ```
 
-**From JSON:**
-```go
-import "github.com/patiee/proxy/config"
+See `examples/request-filter/main.go` for a complete example.
 
-jsonData := []byte(`{"port": "9090", "privacy_level": "anonymous"}`)
-cfg, err := config.LoadConfigJson(jsonData)
-if err != nil {
-    // handle error
+### Proxy Chaining
+
+To chain to an upstream proxy, configure the `upstream` field. You can specify a URL string (defaults to 10s timeout) or an object:
+
+```json
+{
+  "port": "8082",
+  "upstream": {
+    "url": "http://localhost:8081",
+    "timeout": 15
+  }
 }
-srv := server.NewProxyServer(cfg.PrivacyLevel, cfg.Port)
 ```
 
-## Build, Run, and Test
+See `examples/proxychain/main.go` for a complete example.
 
-### Prerequisites
--   Go 1.23.4 or higher
+## Examples
 
-### Build
-To build the example server:
-```bash
-go build -o proxy-server cmd/main.go
-```
+Check the `examples/` directory for ready-to-run examples:
 
-### Run
-Run the example server (ensure you have built it or use `go run`):
-```bash
-# Using go run
-go run cmd/main.go
-
-# Using built binary with custom settings
-PROXY_PORT=8081 PRIVACY_LEVEL=elite ./proxy-server
-```
-
-### Test
-Run unit tests:
-```bash
-go test ./...
-```
-To force using the local Go version if you have version mismatches:
-```bash
-GOTOOLCHAIN=local go test ./...
-```
+-   `examples/request-filter`: Demonstrates adding `X-Forwarded-For`.
+-   `examples/proxychain`: Demonstrates proxy chaining.

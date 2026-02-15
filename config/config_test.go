@@ -23,11 +23,9 @@ func TestLoadConfigJson(t *testing.T) {
 			shouldError:  false,
 		},
 		{
-			name:         "Default Port",
-			input:        `{}`,
-			expectedPort: "8080",
-			expectedVia:  nil,
-			shouldError:  false,
+			name:        "Missing Port",
+			input:       `{}`,
+			shouldError: true,
 		},
 		{
 			name:         "Configured Via",
