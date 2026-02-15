@@ -16,14 +16,14 @@ import (
 
 // ProxyServer represents a proxy server.
 type ProxyServer struct {
-	port     string
-	via      *string
-	upstream *config.UpstreamConfig
-	timeout  time.Duration
-	filters  []func(*http.Request)
-
+	port            string
+	via             *string
+	upstream        *config.UpstreamConfig
 	upstreamURL     *url.URL
 	upstreamTimeout time.Duration
+	timeout         time.Duration
+
+	Filters []func(*http.Request) error
 
 	Transport *http.Transport
 	Client    *http.Client
@@ -79,9 +79,9 @@ func NewProxyServer(port string, via *string, upstream *config.UpstreamConfig, t
 	return p, nil
 }
 
-// ApplyFilter adds a filter function to the proxy server.
-func (p *ProxyServer) ApplyFilter(f func(*http.Request)) {
-	p.filters = append(p.filters, f)
+// AddFilter adds a filter function to the proxy server.
+func (p *ProxyServer) AddFilter(f func(*http.Request) error) {
+	p.Filters = append(p.Filters, f)
 }
 
 // ServeHTTP handles the proxy requests.
@@ -94,6 +94,14 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
+	// Apply filters (support blocking)
+	for _, f := range p.Filters {
+		if err := f(r); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+	}
+
 	var destConn net.Conn
 	var err error
 
@@ -171,8 +179,11 @@ func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Apply all filters
-	for _, f := range p.filters {
-		f(r)
+	for _, f := range p.Filters {
+		if err := f(r); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
 	}
 
 	// Set Via header if configured

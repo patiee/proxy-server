@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,35 +17,40 @@ func TestProxyHeaders(t *testing.T) {
 	customVia := "proxy-server-v1.0.0 1.1.1.1:8080"
 
 	// Define a custom filter function
-	addHeaderFilter := func(r *http.Request) {
+	// Define a custom filter function
+	addHeaderFilter := func(r *http.Request) error {
 		r.Header.Set("X-Filtered", "true")
+		return nil
 	}
 
 	// Define X-Forwarded-For filter
-	xffFilter := func(r *http.Request) {
+	// Define X-Forwarded-For filter
+	xffFilter := func(r *http.Request) error {
 		clientIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 		if prior, ok := r.Header["X-Forwarded-For"]; ok {
 			clientIP = strings.Join(prior, ", ") + ", " + clientIP
 		}
 		r.Header.Set("X-Forwarded-For", clientIP)
+		return nil
 	}
 
 	tests := []struct {
 		name               string
 		viaConfig          *string
 		upstreamConfig     *config.UpstreamConfig
-		filterConfigs      []func(*http.Request)
+		filterConfigs      []func(*http.Request) error
 		headersToSet       map[string]string
 		expectVia          bool
 		expectedVia        string
 		expectXFF          bool
 		expectFilter       bool
 		expectSecondFilter bool
+		expectStatus       int
 	}{
 		{
 			name:          "Standard Proxy Behavior (Default Via = nil)",
 			viaConfig:     nil,
-			filterConfigs: []func(*http.Request){xffFilter},
+			filterConfigs: []func(*http.Request) error{xffFilter},
 			headersToSet:  map[string]string{"X-Before": "test"},
 			expectVia:     false,
 			expectXFF:     true,
@@ -53,7 +59,7 @@ func TestProxyHeaders(t *testing.T) {
 		{
 			name:          "Configured Via Header",
 			viaConfig:     &defaultVia,
-			filterConfigs: []func(*http.Request){xffFilter},
+			filterConfigs: []func(*http.Request) error{xffFilter},
 			headersToSet:  map[string]string{"X-Before": "test"},
 			expectVia:     true,
 			expectedVia:   defaultVia,
@@ -63,7 +69,7 @@ func TestProxyHeaders(t *testing.T) {
 		{
 			name:          "Custom Via Header",
 			viaConfig:     &customVia,
-			filterConfigs: []func(*http.Request){xffFilter},
+			filterConfigs: []func(*http.Request) error{xffFilter},
 			headersToSet:  map[string]string{"X-Before": "test"},
 			expectVia:     true,
 			expectedVia:   customVia,
@@ -73,7 +79,7 @@ func TestProxyHeaders(t *testing.T) {
 		{
 			name:          "Appends XFF",
 			viaConfig:     nil,
-			filterConfigs: []func(*http.Request){xffFilter},
+			filterConfigs: []func(*http.Request) error{xffFilter},
 			headersToSet:  map[string]string{"X-Forwarded-For": "1.2.3.4"},
 			expectVia:     false,
 			expectXFF:     true,
@@ -82,7 +88,7 @@ func TestProxyHeaders(t *testing.T) {
 		{
 			name:          "Custom Request Filter",
 			viaConfig:     nil,
-			filterConfigs: []func(*http.Request){xffFilter, addHeaderFilter},
+			filterConfigs: []func(*http.Request) error{xffFilter, addHeaderFilter},
 			headersToSet:  map[string]string{"X-Before": "test"},
 			expectVia:     false,
 			expectXFF:     true,
@@ -91,11 +97,12 @@ func TestProxyHeaders(t *testing.T) {
 		{
 			name:      "Multiple Filters",
 			viaConfig: nil,
-			filterConfigs: []func(*http.Request){
+			filterConfigs: []func(*http.Request) error{
 				xffFilter,
 				addHeaderFilter,
-				func(r *http.Request) {
+				func(r *http.Request) error {
 					r.Header.Set("X-Second-Filter", "working")
+					return nil
 				},
 			},
 			headersToSet:       map[string]string{"X-Before": "test"},
@@ -108,11 +115,21 @@ func TestProxyHeaders(t *testing.T) {
 			name:           "Upstream Proxy Chaining",
 			viaConfig:      nil,
 			upstreamConfig: &config.UpstreamConfig{URL: "mock_upstream", Timeout: func() *int { i := 10; return &i }()},
-			filterConfigs:  []func(*http.Request){xffFilter},
+			filterConfigs:  []func(*http.Request) error{xffFilter},
 			headersToSet:   map[string]string{"X-Before": "test"},
 			expectVia:      false,
 			expectXFF:      false, // Upstream mock doesn't forward to backend in test logic above, so backend logic skipped
 			expectFilter:   false,
+		},
+		{
+			name:          "Blocking Filter",
+			viaConfig:     nil,
+			filterConfigs: []func(*http.Request) error{func(r *http.Request) error { return fmt.Errorf("blocked") }},
+			headersToSet:  map[string]string{"X-Before": "test"},
+			expectVia:     false,
+			expectXFF:     false,
+			expectFilter:  false,
+			expectStatus:  http.StatusForbidden,
 		},
 	}
 
@@ -199,7 +216,7 @@ func TestProxyHeaders(t *testing.T) {
 			}
 
 			for _, filter := range tt.filterConfigs {
-				proxyServer.ApplyFilter(filter)
+				proxyServer.AddFilter(filter)
 			}
 
 			// Create a request to the backend through the proxy
@@ -214,8 +231,13 @@ func TestProxyHeaders(t *testing.T) {
 			w := httptest.NewRecorder()
 			proxyServer.ServeHTTP(w, req)
 
-			if w.Code != http.StatusOK {
-				t.Errorf("Proxy returned status %v", w.Code)
+			expectedStatus := http.StatusOK
+			if tt.expectStatus != 0 {
+				expectedStatus = tt.expectStatus
+			}
+
+			if w.Code != expectedStatus {
+				t.Errorf("Proxy returned status %d, expected %d", w.Code, expectedStatus)
 			}
 		})
 	}
