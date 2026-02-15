@@ -86,6 +86,28 @@ func (p *ProxyServer) AddFilter(f func(*http.Request) error) {
 
 // ServeHTTP handles the proxy requests.
 func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Apply filters
+	for _, f := range p.Filters {
+		if err := f(r); err != nil {
+			fmt.Printf("Filter error: %v\n", err)
+			if b, ok := err.(*BlockedRequestError); ok {
+				http.Error(w, fmt.Sprintf("Request Blocked: %s", b.Message), http.StatusForbidden)
+			} else {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+			return
+		}
+	}
+
+	// Set Via header if configured
+	if p.via != nil {
+		if prior := r.Header.Get("Via"); prior != "" {
+			r.Header.Set("Via", prior+", "+*p.via)
+		} else {
+			r.Header.Set("Via", *p.via)
+		}
+	}
+
 	if r.Method == http.MethodConnect {
 		p.handleHTTPS(w, r)
 	} else {
@@ -94,14 +116,6 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
-	// Apply filters (support blocking)
-	for _, f := range p.Filters {
-		if err := f(r); err != nil {
-			http.Error(w, err.Error(), http.StatusForbidden)
-			return
-		}
-	}
-
 	var destConn net.Conn
 	var err error
 
@@ -137,9 +151,12 @@ func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 		connectReq := &http.Request{
 			Method: http.MethodConnect,
 			URL:    &url.URL{Host: r.Host},
-			Header: make(http.Header),
+			Header: make(http.Header), // Propagate headers
 			Host:   r.Host,
 		}
+		// Copy headers to propagate Via, etc.
+		copyHeaders(connectReq.Header, r.Header)
+
 		if err := connectReq.Write(destConn); err != nil {
 			destConn.Close()
 			http.Error(w, "Failed to send CONNECT to upstream: "+err.Error(), http.StatusServiceUnavailable)
@@ -178,23 +195,6 @@ func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	// Apply all filters
-	for _, f := range p.Filters {
-		if err := f(r); err != nil {
-			http.Error(w, err.Error(), http.StatusForbidden)
-			return
-		}
-	}
-
-	// Set Via header if configured
-	if p.via != nil {
-		if prior := r.Header.Get("Via"); prior != "" {
-			r.Header.Set("Via", prior+", "+*p.via)
-		} else {
-			r.Header.Set("Via", *p.via)
-		}
-	}
-
 	// Prepare context with timeout (if upstream is configured)
 	ctx := r.Context()
 	if p.upstreamTimeout > 0 {

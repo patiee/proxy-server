@@ -28,7 +28,7 @@ func xffFilter(r *http.Request) error {
 func blockReddit(r *http.Request) error {
 	if strings.Contains(r.Host, "reddit.com") {
 		log.Printf("Blocking request to %s", r.Host)
-		return fmt.Errorf("blocked domain: %s", r.Host)
+		return server.NewBlockedRequestError(fmt.Sprintf("blocked domain: %s", r.Host))
 	}
 	return nil
 }

@@ -124,12 +124,22 @@ func TestProxyHeaders(t *testing.T) {
 		{
 			name:          "Blocking Filter",
 			viaConfig:     nil,
-			filterConfigs: []func(*http.Request) error{func(r *http.Request) error { return fmt.Errorf("blocked") }},
+			filterConfigs: []func(*http.Request) error{func(r *http.Request) error { return server.NewBlockedRequestError("blocked") }},
 			headersToSet:  map[string]string{"X-Before": "test"},
 			expectVia:     false,
 			expectXFF:     false,
 			expectFilter:  false,
 			expectStatus:  http.StatusForbidden,
+		},
+		{
+			name:          "Internal Error Filter",
+			viaConfig:     nil,
+			filterConfigs: []func(*http.Request) error{func(r *http.Request) error { return fmt.Errorf("internal failure") }},
+			headersToSet:  map[string]string{"X-Before": "test"},
+			expectVia:     false,
+			expectXFF:     false,
+			expectFilter:  false,
+			expectStatus:  http.StatusInternalServerError,
 		},
 	}
 
