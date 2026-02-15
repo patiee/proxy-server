@@ -3,7 +3,10 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
+	"time"
 
 	"strconv"
 
@@ -12,8 +15,8 @@ import (
 
 // UpstreamConfig holds the upstream proxy configuration.
 type UpstreamConfig struct {
-	URL     string
-	Timeout *int // Timeout in seconds
+	URL     *url.URL
+	Timeout time.Duration
 }
 
 // Config holds the proxy configuration.
@@ -67,22 +70,26 @@ func LoadConfig() (*Config, error) {
 
 	var upstream *UpstreamConfig
 	if v, ok := os.LookupEnv("PROXY_UPSTREAM_URL"); ok {
-		if upstream == nil {
-			defaultTimeout := 10
-			upstream = &UpstreamConfig{Timeout: &defaultTimeout}
+		if !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
+			return nil, fmt.Errorf("upstream proxy must start with http:// or https://")
 		}
-		upstream.URL = v
+		u, err := url.Parse(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid upstream URL: %v", err)
+		}
 
+		upstreamTimeout := 10 * time.Second // Default
 		if v, ok := os.LookupEnv("PROXY_UPSTREAM_TIMEOUT"); ok {
 			t, err := strconv.Atoi(v)
-			if err == nil {
-				upstream.Timeout = &t
+			if err == nil && t > 0 {
+				upstreamTimeout = time.Duration(t) * time.Second
 			}
 		}
-	}
 
-	if upstream != nil && upstream.URL == "" {
-		upstream = nil
+		upstream = &UpstreamConfig{
+			URL:     u,
+			Timeout: upstreamTimeout,
+		}
 	}
 
 	return &Config{
@@ -132,9 +139,22 @@ func LoadConfigJson(data []byte) (*Config, error) {
 	}
 
 	if conf.Upstream != nil {
+		if !strings.HasPrefix(conf.Upstream.URL, "http://") && !strings.HasPrefix(conf.Upstream.URL, "https://") {
+			return nil, fmt.Errorf("upstream proxy must start with http:// or https://")
+		}
+		u, err := url.Parse(conf.Upstream.URL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid upstream URL: %v", err)
+		}
+
+		upstreamTimeout := 10 * time.Second
+		if conf.Upstream.Timeout != nil && *conf.Upstream.Timeout > 0 {
+			upstreamTimeout = time.Duration(*conf.Upstream.Timeout) * time.Second
+		}
+
 		config.Upstream = &UpstreamConfig{
-			URL:     conf.Upstream.URL,
-			Timeout: conf.Upstream.Timeout,
+			URL:     u,
+			Timeout: upstreamTimeout,
 		}
 	}
 	return config, nil

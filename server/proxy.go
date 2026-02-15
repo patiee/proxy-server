@@ -21,11 +21,10 @@ type ProxyServer struct {
 	port               string
 	via                *string
 	upstream           *config.UpstreamConfig
-	upstreamURL        *url.URL
-	upstreamTimeout    time.Duration
 	timeout            time.Duration
 	InsecureSkipVerify bool
 
+	// Filters modify or block the request.
 	Filters []func(*http.Request) error
 
 	// HttpsHandlers determine if a CONNECT request should be intercepted (MITM).
@@ -69,27 +68,8 @@ func NewProxyServer(conf *config.Config) (*ProxyServer, error) {
 	}
 
 	if conf.Upstream != nil {
-		if !strings.HasPrefix(conf.Upstream.URL, "http://") && !strings.HasPrefix(conf.Upstream.URL, "https://") {
-			return nil, fmt.Errorf("upstream proxy must start with http:// or https://")
-		}
-		// Validate URL parsing
-		u, err := url.Parse(conf.Upstream.URL)
-		if err != nil {
-			return nil, fmt.Errorf("invalid upstream URL: %v", err)
-		}
-		p.upstreamURL = u
-
-		// Set upstream timeout
-		if conf.Upstream.Timeout != nil {
-			p.upstreamTimeout = time.Duration(*conf.Upstream.Timeout) * time.Second
-		}
-		if p.upstreamTimeout == 0 {
-			// Default timeout
-			p.upstreamTimeout = 10 * time.Second
-		}
-
-		// Configure Transport with upstream proxy
-		p.Transport.Proxy = http.ProxyURL(u)
+		// Use configured transport with upstream
+		p.Transport.Proxy = http.ProxyURL(conf.Upstream.URL)
 	}
 
 	// Initialize Client with configured Transport and Timeout
@@ -365,7 +345,7 @@ func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	// Determine destination address
 	destAddr := r.Host
 	if p.upstream != nil {
-		destAddr = p.upstreamURL.Host
+		destAddr = p.upstream.URL.Host
 	}
 
 	// Use Transport.DialContext if available, otherwise default to net.Dialer
@@ -376,9 +356,9 @@ func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 
 	// Prepare context with timeout
 	ctx := r.Context()
-	if p.upstreamTimeout > 0 {
+	if p.upstream != nil && p.upstream.Timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, p.upstreamTimeout)
+		ctx, cancel = context.WithTimeout(ctx, p.upstream.Timeout)
 		defer cancel()
 	}
 
@@ -440,9 +420,9 @@ func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Prepare context with timeout (if upstream is configured)
 	ctx := r.Context()
-	if p.upstreamTimeout > 0 {
+	if p.upstream != nil && p.upstream.Timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, p.upstreamTimeout)
+		ctx, cancel = context.WithTimeout(ctx, p.upstream.Timeout)
 		defer cancel()
 	}
 

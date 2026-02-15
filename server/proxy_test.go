@@ -5,8 +5,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/patiee/proxy/config"
 	"github.com/patiee/proxy/server"
@@ -33,6 +35,8 @@ func TestProxyHeaders(t *testing.T) {
 		r.Header.Set("X-Forwarded-For", clientIP)
 		return nil
 	}
+
+	mockURL, _ := url.Parse("http://mock_upstream")
 
 	tests := []struct {
 		name               string
@@ -114,7 +118,7 @@ func TestProxyHeaders(t *testing.T) {
 		{
 			name:           "Upstream Proxy Chaining",
 			viaConfig:      nil,
-			upstreamConfig: &config.UpstreamConfig{URL: "mock_upstream", Timeout: func() *int { i := 10; return &i }()},
+			upstreamConfig: &config.UpstreamConfig{URL: mockURL, Timeout: 10 * time.Second},
 			filterConfigs:  []func(*http.Request) error{xffFilter},
 			headersToSet:   map[string]string{"X-Before": "test"},
 			expectVia:      false,
@@ -195,7 +199,7 @@ func TestProxyHeaders(t *testing.T) {
 
 			var upstream *httptest.Server
 			// var upstreamURL string
-			if tt.upstreamConfig != nil && tt.upstreamConfig.URL == "mock_upstream" {
+			if tt.upstreamConfig != nil && tt.upstreamConfig.URL.Host == "mock_upstream" {
 				upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					// Verify upstream received the request
 					t.Logf("Upstream received request: %s %s", r.Method, r.URL.String())
@@ -217,7 +221,8 @@ func TestProxyHeaders(t *testing.T) {
 
 				// Parse host:port from upstream.URL
 				// Ensure we pass the full URL with scheme as per new requirement
-				tt.upstreamConfig.URL = upstream.URL
+				u, _ := url.Parse(upstream.URL)
+				tt.upstreamConfig.URL = u
 			}
 
 			conf := &config.Config{
