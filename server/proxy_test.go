@@ -193,7 +193,7 @@ func TestProxyHeaders(t *testing.T) {
 				tt.upstreamConfig.URL = upstream.URL
 			}
 
-			proxyServer, err := server.NewProxyServer("8080", tt.viaConfig, tt.upstreamConfig)
+			proxyServer, err := server.NewProxyServer("8080", tt.viaConfig, tt.upstreamConfig, nil)
 			if err != nil {
 				t.Fatalf("Failed to create proxy server: %v", err)
 			}

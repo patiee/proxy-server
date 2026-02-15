@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -15,34 +16,72 @@ import (
 
 // ProxyServer represents a proxy server.
 type ProxyServer struct {
-	Port     string
-	Via      *string
-	Upstream *config.UpstreamConfig
-	Filters  []func(*http.Request)
+	port     string
+	via      *string
+	upstream *config.UpstreamConfig
+	timeout  time.Duration
+	filters  []func(*http.Request)
+
+	upstreamURL     *url.URL
+	upstreamTimeout time.Duration
+
+	Transport *http.Transport
+	Client    *http.Client
 }
 
 // NewProxyServer creates a new ProxyServer with the given configuration.
-func NewProxyServer(port string, via *string, upstream *config.UpstreamConfig) (*ProxyServer, error) {
+func NewProxyServer(port string, via *string, upstream *config.UpstreamConfig, timeout *int) (*ProxyServer, error) {
+	p := &ProxyServer{
+		port:     port,
+		via:      via,
+		upstream: upstream,
+	}
+
+	if timeout != nil && *timeout > 0 {
+		p.timeout = time.Duration(*timeout) * time.Second
+	} else {
+		p.timeout = 10 * time.Second
+	}
+
+	// Default Transport
+	p.Transport = &http.Transport{}
+
 	if upstream != nil {
 		if !strings.HasPrefix(upstream.URL, "http://") && !strings.HasPrefix(upstream.URL, "https://") {
 			return nil, fmt.Errorf("upstream proxy must start with http:// or https://")
 		}
 		// Validate URL parsing
-		_, err := url.Parse(upstream.URL)
+		u, err := url.Parse(upstream.URL)
 		if err != nil {
 			return nil, fmt.Errorf("invalid upstream URL: %v", err)
 		}
+		p.upstreamURL = u
+
+		// Set upstream timeout
+		if upstream.Timeout != nil {
+			p.upstreamTimeout = time.Duration(*upstream.Timeout) * time.Second
+		}
+		if p.upstreamTimeout == 0 {
+			// Default timeout
+			p.upstreamTimeout = 10 * time.Second
+		}
+
+		// Configure Transport with upstream proxy
+		p.Transport.Proxy = http.ProxyURL(u)
 	}
-	return &ProxyServer{
-		Port:     port,
-		Via:      via,
-		Upstream: upstream,
-	}, nil
+
+	// Initialize Client with configured Transport and Timeout
+	p.Client = &http.Client{
+		Transport: p.Transport,
+		Timeout:   p.timeout,
+	}
+
+	return p, nil
 }
 
 // ApplyFilter adds a filter function to the proxy server.
 func (p *ProxyServer) ApplyFilter(f func(*http.Request)) {
-	p.Filters = append(p.Filters, f)
+	p.filters = append(p.filters, f)
 }
 
 // ServeHTTP handles the proxy requests.
@@ -58,28 +97,35 @@ func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 	var destConn net.Conn
 	var err error
 
-	if p.Upstream != nil {
-		// Parse upstream URL to get host
-		upstreamURL, err := url.Parse(p.Upstream.URL)
-		if err != nil {
-			http.Error(w, "Invalid upstream configuration: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+	// Determine destination address
+	destAddr := r.Host
+	if p.upstream != nil {
+		destAddr = p.upstreamURL.Host
+	}
 
-		// Connect to upstream proxy with configured timeout
-		var timeout time.Duration
-		if p.Upstream.Timeout != nil {
-			timeout = time.Duration(*p.Upstream.Timeout) * time.Second
-		}
-		if timeout == 0 {
-			timeout = 10 * time.Second // Default fallback safe guard
-		}
-		destConn, err = net.DialTimeout("tcp", upstreamURL.Host, timeout)
-		if err != nil {
-			http.Error(w, "Upstream proxy unavailable: "+err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		// Send CONNECT request to upstream
+	// Use Transport.DialContext if available, otherwise default to net.Dialer
+	dialContext := p.Transport.DialContext
+	if dialContext == nil {
+		dialContext = (&net.Dialer{}).DialContext
+	}
+
+	// Prepare context with timeout
+	ctx := r.Context()
+	if p.upstreamTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.upstreamTimeout)
+		defer cancel()
+	}
+
+	destConn, err = dialContext(ctx, "tcp", destAddr)
+
+	if err != nil {
+		http.Error(w, "Destination unavailable: "+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	// If using upstream proxy, send CONNECT request
+	if p.upstream != nil {
 		connectReq := &http.Request{
 			Method: http.MethodConnect,
 			URL:    &url.URL{Host: r.Host},
@@ -104,13 +150,6 @@ func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Upstream proxy refused connection: "+resp.Status, http.StatusServiceUnavailable)
 			return
 		}
-	} else {
-		// Direct connection
-		destConn, err = net.DialTimeout("tcp", r.Host, 10*time.Second)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -132,21 +171,29 @@ func (p *ProxyServer) handleHTTPS(w http.ResponseWriter, r *http.Request) {
 
 func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Apply all filters
-	for _, f := range p.Filters {
+	for _, f := range p.filters {
 		f(r)
 	}
 
 	// Set Via header if configured
-	if p.Via != nil {
+	if p.via != nil {
 		if prior := r.Header.Get("Via"); prior != "" {
-			r.Header.Set("Via", prior+", "+*p.Via)
+			r.Header.Set("Via", prior+", "+*p.via)
 		} else {
-			r.Header.Set("Via", *p.Via)
+			r.Header.Set("Via", *p.via)
 		}
 	}
 
+	// Prepare context with timeout (if upstream is configured)
+	ctx := r.Context()
+	if p.upstreamTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.upstreamTimeout)
+		defer cancel()
+	}
+
 	// Create a new request to forward
-	outReq := r.Clone(r.Context())
+	outReq := r.Clone(ctx)
 	outReq.RequestURI = "" // RequestURI must be empty for client requests
 
 	// Ensure Host header is set correctly
@@ -154,22 +201,11 @@ func (p *ProxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		outReq.Host = r.URL.Host
 	}
 
-	client := &http.Client{}
-
-	// Configure upstream proxy for HTTP requests
-	if p.Upstream != nil {
-		proxyUrl, err := url.Parse(p.Upstream.URL)
-		if err == nil {
-			client.Transport = &http.Transport{
-				Proxy: http.ProxyURL(proxyUrl),
-			}
-		}
-		if p.Upstream.Timeout != nil && *p.Upstream.Timeout > 0 {
-			client.Timeout = time.Duration(*p.Upstream.Timeout) * time.Second
-		} else {
-			client.Timeout = 10 * time.Second
-		}
-	}
+	// Use pre-configured client with current Transport
+	// We shallow copy the client to ensure we use the potentially updated p.Transport
+	// if the user replaced the Transport struct entirely.
+	client := *p.Client
+	client.Transport = p.Transport
 
 	resp, err := client.Do(outReq)
 	if err != nil {

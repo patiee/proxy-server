@@ -21,6 +21,7 @@ type Config struct {
 	Port     string
 	Via      *string
 	Upstream *UpstreamConfig
+	Timeout  *int // Global client timeout in seconds
 }
 
 // LoadConfig loads configuration from .env file or environment variables.
@@ -35,6 +36,14 @@ func LoadConfig() (*Config, error) {
 	var via *string
 	if v, ok := os.LookupEnv("PROXY_VIA"); ok {
 		via = &v
+	}
+
+	var timeout *int
+	if v, ok := os.LookupEnv("PROXY_TIMEOUT"); ok {
+		t, err := strconv.Atoi(v)
+		if err == nil {
+			timeout = &t
+		}
 	}
 
 	var upstream *UpstreamConfig
@@ -61,6 +70,7 @@ func LoadConfig() (*Config, error) {
 		Port:     port,
 		Via:      via,
 		Upstream: upstream,
+		Timeout:  timeout,
 	}, nil
 }
 
@@ -68,6 +78,7 @@ type JsonConfig struct {
 	Port     string              `json:"port"`
 	Via      *string             `json:"via"`
 	Upstream *JsonUpstreamConfig `json:"upstream"`
+	Timeout  *int                `json:"timeout"`
 }
 
 type JsonUpstreamConfig struct {
@@ -87,8 +98,9 @@ func LoadConfigJson(data []byte) (*Config, error) {
 	}
 
 	config := &Config{
-		Port: conf.Port,
-		Via:  conf.Via,
+		Port:    conf.Port,
+		Via:     conf.Via,
+		Timeout: conf.Timeout,
 	}
 
 	if conf.Upstream != nil {
