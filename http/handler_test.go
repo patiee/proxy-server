@@ -1,4 +1,4 @@
-package server_test
+package http_test
 
 import (
 	"fmt"
@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/patiee/proxy/config"
-	"github.com/patiee/proxy/server"
+	"github.com/patiee/proxy/errors"
+	proxyhttp "github.com/patiee/proxy/http"
 )
 
 func TestProxyHeaders(t *testing.T) {
@@ -19,13 +20,11 @@ func TestProxyHeaders(t *testing.T) {
 	customVia := "proxy-server-v1.0.0 1.1.1.1:8080"
 
 	// Define a custom filter function
-	// Define a custom filter function
 	addHeaderFilter := func(r *http.Request) error {
 		r.Header.Set("X-Filtered", "true")
 		return nil
 	}
 
-	// Define X-Forwarded-For filter
 	// Define X-Forwarded-For filter
 	xffFilter := func(r *http.Request) error {
 		clientIP, _, _ := net.SplitHostPort(r.RemoteAddr)
@@ -97,6 +96,7 @@ func TestProxyHeaders(t *testing.T) {
 			expectVia:     false,
 			expectXFF:     true,
 			expectFilter:  true,
+			expectStatus:  0,
 		},
 		{
 			name:      "Multiple Filters",
@@ -128,7 +128,7 @@ func TestProxyHeaders(t *testing.T) {
 		{
 			name:          "Blocking Filter",
 			viaConfig:     nil,
-			filterConfigs: []func(*http.Request) error{func(r *http.Request) error { return server.NewBlockedRequestError("blocked") }},
+			filterConfigs: []func(*http.Request) error{func(r *http.Request) error { return errors.NewBlockedRequestError("blocked") }},
 			headersToSet:  map[string]string{"X-Before": "test"},
 			expectVia:     false,
 			expectXFF:     false,
@@ -198,7 +198,6 @@ func TestProxyHeaders(t *testing.T) {
 			defer backend.Close()
 
 			var upstream *httptest.Server
-			// var upstreamURL string
 			if tt.upstreamConfig != nil && tt.upstreamConfig.URL.Host == "mock_upstream" {
 				upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					// Verify upstream received the request
@@ -220,23 +219,21 @@ func TestProxyHeaders(t *testing.T) {
 				defer upstream.Close()
 
 				// Parse host:port from upstream.URL
-				// Ensure we pass the full URL with scheme as per new requirement
 				u, _ := url.Parse(upstream.URL)
 				tt.upstreamConfig.URL = u
 			}
 
-			conf := &config.Config{
-				Port:     "8080",
-				Via:      tt.viaConfig,
-				Upstream: tt.upstreamConfig,
-			}
-			proxyServer, err := server.NewProxyServer(conf)
-			if err != nil {
-				t.Fatalf("Failed to create proxy server: %v", err)
+			// Setup Transport
+			transport := &http.Transport{}
+			if tt.upstreamConfig != nil {
+				transport.Proxy = http.ProxyURL(tt.upstreamConfig.URL)
 			}
 
+			handler := proxyhttp.NewProxyHandler(nil, transport)
+			handler.Via = tt.viaConfig
+
 			for _, filter := range tt.filterConfigs {
-				proxyServer.AddFilter(filter)
+				handler.RequestFilters = append(handler.RequestFilters, filter)
 			}
 
 			// Create a request to the backend through the proxy
@@ -249,7 +246,7 @@ func TestProxyHeaders(t *testing.T) {
 			}
 
 			w := httptest.NewRecorder()
-			proxyServer.ServeHTTP(w, req)
+			handler.ServeHTTP(w, req)
 
 			expectedStatus := http.StatusOK
 			if tt.expectStatus != 0 {

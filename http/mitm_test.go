@@ -1,4 +1,4 @@
-package server
+package http_test
 
 import (
 	"bufio"
@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/patiee/proxy/cert"
-	"github.com/patiee/proxy/config"
+	proxyhttp "github.com/patiee/proxy/http"
 )
 
 // Helper to generate a self-signed CA for testing
@@ -78,42 +78,43 @@ func TestMITM(t *testing.T) {
 	targetServer := httptest.NewTLSServer(targetHandler)
 	defer targetServer.Close()
 
-	// 2. Setup Proxy Server with MITM
+	// 2. Setup Proxy Handler with MITM
 	skipVerify := true
-	c := &config.Config{
-		Port:               "0",
-		InsecureSkipVerify: &skipVerify,
-	}
-	proxy, err := NewProxyServer(c)
-	if err != nil {
-		t.Fatalf("Failed to create proxy: %v", err)
-	}
 
 	ca, err := generateTestCA()
 	if err != nil {
 		t.Fatalf("Failed to generate CA: %v", err)
 	}
-	proxy.CertManager = cert.NewCertificateManager(ca)
+	certManager := cert.NewCertificateManager(ca)
 
-	// Add HttpsHandler to intercept everything
-	proxy.AddHttpsHandler(func(r *http.Request) bool {
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipVerify},
+	}
+
+	handler := proxyhttp.NewProxyHandler(certManager, transport)
+	handler.InsecureSkipVerify = skipVerify
+
+	// Add HttpsFilter to intercept everything
+	handler.HttpsFilters = append(handler.HttpsFilters, func(r *http.Request) bool {
 		return true // Intercept all
 	})
 
 	// Add Request Filter to inject header
-	proxy.AddFilter(func(r *http.Request) error {
-		r.Header.Set("X-Intercepted", "true")
+	handler.RequestFilters = append(handler.RequestFilters, func(r *http.Request) error {
+		if r.Method != http.MethodConnect {
+			r.Header.Set("X-Intercepted", "true")
+		}
 		return nil
 	})
 
 	// Add Response Filter to modify response
-	proxy.AddResponseFilter(func(resp *http.Response) error {
+	handler.ResponseFilters = append(handler.ResponseFilters, func(resp *http.Response) error {
 		resp.Header.Set("X-Response-Modified", "modified")
 		return nil
 	})
 
 	// Start Proxy
-	proxyServer := httptest.NewServer(proxy)
+	proxyServer := httptest.NewServer(handler)
 	defer proxyServer.Close()
 
 	// 3. Setup Client
@@ -125,13 +126,13 @@ func TestMITM(t *testing.T) {
 	caCertPool.AddCert(ca.Leaf)
 
 	// Create a custom transport that trusts our CA
-	transport := &http.Transport{
+	clientTransport := &http.Transport{
 		Proxy: http.ProxyURL(proxyURL),
 		TLSClientConfig: &tls.Config{
 			RootCAs: caCertPool,
 		},
 	}
-	client.Transport = transport
+	client.Transport = clientTransport
 
 	// 4. Perform Request
 	resp, err := client.Get(targetServer.URL)
@@ -174,33 +175,32 @@ func TestMITM_SecureValidation(t *testing.T) {
 	targetServer.StartTLS()
 	defer targetServer.Close()
 
-	// 2. Setup Proxy Server with MITM
+	// 2. Setup Proxy Handler with MITM
 	skipVerify := false
-	c := &config.Config{
-		Port:               "0",
-		InsecureSkipVerify: &skipVerify,
-	}
-	proxy, err := NewProxyServer(c)
-	if err != nil {
-		t.Fatalf("Failed to create proxy: %v", err)
-	}
-
-	// Add target cert to proxy's RootCAs
-	certPool := x509.NewCertPool()
-	certPool.AddCert(targetCert.Leaf)
-	proxy.Transport.TLSClientConfig.RootCAs = certPool
 
 	ca, err := generateTestCA()
 	if err != nil {
 		t.Fatalf("Failed to generate CA: %v", err)
 	}
-	proxy.CertManager = cert.NewCertificateManager(ca)
+	certManager := cert.NewCertificateManager(ca)
 
-	proxy.AddHttpsHandler(func(r *http.Request) bool {
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipVerify},
+	}
+
+	// Add target cert to proxy's RootCAs
+	certPool := x509.NewCertPool()
+	certPool.AddCert(targetCert.Leaf)
+	transport.TLSClientConfig.RootCAs = certPool
+
+	handler := proxyhttp.NewProxyHandler(certManager, transport)
+	handler.InsecureSkipVerify = skipVerify
+
+	handler.HttpsFilters = append(handler.HttpsFilters, func(r *http.Request) bool {
 		return true // Intercept all
 	})
 
-	proxyServer := httptest.NewServer(proxy)
+	proxyServer := httptest.NewServer(handler)
 	defer proxyServer.Close()
 
 	// 3. Setup Client
@@ -210,13 +210,13 @@ func TestMITM_SecureValidation(t *testing.T) {
 	caCertPool := x509.NewCertPool()
 	caCertPool.AddCert(ca.Leaf)
 
-	transport := &http.Transport{
+	clientTransport := &http.Transport{
 		Proxy: http.ProxyURL(proxyURL),
 		TLSClientConfig: &tls.Config{
 			RootCAs: caCertPool,
 		},
 	}
-	client.Transport = transport
+	client.Transport = clientTransport
 
 	// 4. Perform Request
 	resp, err := client.Get(targetServer.URL)
@@ -242,7 +242,6 @@ func TestMITM_NestedConnect(t *testing.T) {
 	finalURL, _ := url.Parse(finalServer.URL)
 
 	// 2. Setup Secondary Proxy (Manual TLS Listener to avoid httptest hijack issues)
-	// Reusing generateTestCA for a self-signed cert for the secondary proxy
 	secCert, _ := generateTestCA()
 	secTLSConfig := &tls.Config{Certificates: []tls.Certificate{*secCert}}
 
@@ -296,24 +295,21 @@ func TestMITM_NestedConnect(t *testing.T) {
 
 	// 3. Setup Primary Proxy (MITM)
 	skipVerify := true
-	c := &config.Config{
-		Port:               "0",
-		InsecureSkipVerify: &skipVerify,
-	}
-
-	primaryProxy, err := NewProxyServer(c)
-	if err != nil {
-		t.Fatalf("Failed to create proxy: %v", err)
-	}
-
 	ca, err := generateTestCA()
 	if err != nil {
 		t.Fatalf("Failed to generate CA: %v", err)
 	}
-	primaryProxy.CertManager = cert.NewCertificateManager(ca)
-	primaryProxy.AddHttpsHandler(func(r *http.Request) bool { return true }) // Intercept all
+	certManager := cert.NewCertificateManager(ca)
 
-	primaryServer := httptest.NewServer(primaryProxy)
+	transport := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipVerify},
+	}
+
+	handler := proxyhttp.NewProxyHandler(certManager, transport)
+	handler.InsecureSkipVerify = skipVerify
+	handler.HttpsFilters = append(handler.HttpsFilters, func(r *http.Request) bool { return true }) // Intercept all
+
+	primaryServer := httptest.NewServer(handler)
 	defer primaryServer.Close()
 	primaryURL, _ := url.Parse(primaryServer.URL)
 

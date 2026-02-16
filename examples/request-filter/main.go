@@ -10,7 +10,8 @@ import (
 	"os"
 
 	"github.com/patiee/proxy/config"
-	"github.com/patiee/proxy/server"
+	"github.com/patiee/proxy/errors"
+	proxy "github.com/patiee/proxy/proxy"
 )
 
 // xffFilter implements the X-Forwarded-For filter
@@ -28,7 +29,7 @@ func xffFilter(r *http.Request) error {
 func blockReddit(r *http.Request) error {
 	if strings.Contains(r.Host, "reddit.com") {
 		log.Printf("Blocking request to %s", r.Host)
-		return server.NewBlockedRequestError(fmt.Sprintf("blocked domain: %s", r.Host))
+		return errors.NewBlockedRequestError(fmt.Sprintf("blocked domain: %s", r.Host))
 	}
 	return nil
 }
@@ -45,18 +46,18 @@ func main() {
 		log.Fatalf("Failed to parse config: %v", err)
 	}
 
-	// Create new proxy server
-	proxy, err := server.NewProxyServer(config)
+	// Create Proxy Server
+	p, err := proxy.NewProxyServer(config)
 	if err != nil {
 		log.Fatalf("Failed to create proxy server: %v", err)
 	}
 
 	// Apply filters
-	proxy.AddFilter(xffFilter)
-	proxy.AddFilter(blockReddit)
+	p.AddRequestFilter(xffFilter)
+	p.AddRequestFilter(blockReddit)
 
 	log.Printf("Starting proxy server on port %s with X-Forwarded-For filter", config.Port)
-	if err := http.ListenAndServe(":"+config.Port, proxy); err != nil {
+	if err := http.ListenAndServe(":"+config.Port, p); err != nil {
 		log.Fatalf("Failed to start proxy server: %v", err)
 	}
 }

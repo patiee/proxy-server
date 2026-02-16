@@ -1,6 +1,6 @@
-# Proxy Library
+# Proxy Server
 
-A flexible HTTP/HTTPS proxy library for Go, supporting request filtering, upstream chaining, and configurable headers.
+A flexible HTTP/HTTPS and SOCKS5 proxy server for Go, supporting request filtering, upstream chaining, and configurable headers.
 
 ## Features
 
@@ -13,6 +13,9 @@ A flexible HTTP/HTTPS proxy library for Go, supporting request filtering, upstre
 -   **Proxy Chaining**:
     -   **Upstream Proxy**: Forward requests to another proxy (HTTP forwarding and HTTPS tunneling).
     -   **Validation**: Enforces valid `http://` or `https://` schemes for upstream URLs.
+-   **SOCKS5 Support**:
+    -   **Upstream**: Connect to `socks5://` upstream proxies.
+    -   **Server**: Act as a SOCKS5 server using `ServeSOCKS5`. Supports transparent HTTP/HTTPS filtering over SOCKS5.
 -   **Configuration**:
     -   Load from environment variables, `.env` files, or JSON.
 
@@ -60,7 +63,7 @@ import (
 	"net/http"
 
 	"github.com/patiee/proxy/config"
-	"github.com/patiee/proxy/server"
+	"github.com/patiee/proxy/proxy"
 )
 
 func main() {
@@ -116,9 +119,63 @@ To chain to an upstream proxy, configure the `upstream` field. You can specify a
 
 See `examples/proxychain/main.go` for a complete example.
 
+### SOCKS5 Support
+
+#### Upstream SOCKS5 Proxy chaining
+
+To usage an upstream SOCKS5 proxy, set the `upstream` URL scheme to `socks5://`. You can also configure authentication and timeouts.
+
+**JSON Configuration:**
+
+```json
+{
+  "port": "8080",
+  "upstream": {
+    "url": "socks5://internal-proxy:1080",
+    "timeout": 10
+  },
+  "socks5": {
+    "user": "myuser",
+    "password": "mypassword",
+    "timeout": 30
+  }
+}
+```
+
+**Environment Variables:**
+
+-   `PROXY_UPSTREAM_URL`: `socks5://internal-proxy:1080`
+-   `PROXY_SOCKS5_USER`: SOCKS5 username
+-   `PROXY_SOCKS5_PASSWORD`: SOCKS5 password
+-   `PROXY_SOCKS5_TIMEOUT`: SOCKS5 connection/handshake timeout in seconds (default: 10s)
+
+#### SOCKS5 Server
+
+The proxy can also act as a SOCKS5 server, accepting SOCKS5 connections from clients and forwarding them (potentially via another upstream proxy).
+
+**Configuration:**
+
+Simply configure the SOCKS5 credentials in the `socks5` section (or via env vars). If configured, the server will accept SOCKS5 connections on the main `port`.
+
+**Note:** The server auto-detects the protocol (HTTP/HTTPS/SOCKS5) on the same port.
+
+```json
+{
+  "port": "1080",
+  "socks5": {
+    "user": "server-user",
+    "password": "server-password",
+    "timeout": 30
+  }
+}
+```
+
+-   `timeout`: Takes effect for the initial SOCKS5 handshake deadline.
+
 ## Examples
 
 Check the `examples/` directory for ready-to-run examples:
 
 -   `examples/request-filter`: Demonstrates adding `X-Forwarded-For`.
--   `examples/proxychain`: Demonstrates proxy chaining.
+-   `examples/proxychain`: Demonstrates proxy chaining (HTTP/HTTPS).
+-   `examples/socks5`: Demonstrates SOCKS5 server usage.

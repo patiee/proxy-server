@@ -1,4 +1,4 @@
-package server
+package errors
 
 // BlockedRequestError indicates a request was blocked by a filter.
 type BlockedRequestError struct {
