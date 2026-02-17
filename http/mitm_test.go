@@ -20,6 +20,7 @@ import (
 
 	"github.com/patiee/proxy/cert"
 	proxyhttp "github.com/patiee/proxy/http"
+	plog "github.com/patiee/proxy/log"
 )
 
 // Helper to generate a self-signed CA for testing
@@ -91,7 +92,7 @@ func TestMITM(t *testing.T) {
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipVerify},
 	}
 
-	handler := proxyhttp.NewProxyHandler(certManager, transport)
+	handler := proxyhttp.NewProxyHandler(certManager, transport, plog.DefaultLogger())
 	handler.InsecureSkipVerify = skipVerify
 
 	// Add HttpsFilter to intercept everything
@@ -193,7 +194,7 @@ func TestMITM_SecureValidation(t *testing.T) {
 	certPool.AddCert(targetCert.Leaf)
 	transport.TLSClientConfig.RootCAs = certPool
 
-	handler := proxyhttp.NewProxyHandler(certManager, transport)
+	handler := proxyhttp.NewProxyHandler(certManager, transport, plog.DefaultLogger())
 	handler.InsecureSkipVerify = skipVerify
 
 	handler.HttpsFilters = append(handler.HttpsFilters, func(r *http.Request) bool {
@@ -305,7 +306,7 @@ func TestMITM_NestedConnect(t *testing.T) {
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: skipVerify},
 	}
 
-	handler := proxyhttp.NewProxyHandler(certManager, transport)
+	handler := proxyhttp.NewProxyHandler(certManager, transport, plog.DefaultLogger())
 	handler.InsecureSkipVerify = skipVerify
 	handler.HttpsFilters = append(handler.HttpsFilters, func(r *http.Request) bool { return true }) // Intercept all
 

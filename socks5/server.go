@@ -8,6 +8,8 @@ import (
 	"net"
 	"time"
 
+	"log"
+
 	"github.com/patiee/proxy/config"
 )
 
@@ -26,18 +28,20 @@ type Server struct {
 	Password string
 	Upstream *config.UpstreamConfig
 	Timeout  time.Duration
+	log      *log.Logger
 
 	// ProxyHandler handles the underlying HTTP/HTTPS proxying logic
 	ProxyHandler ProxyHandler
 }
 
 // NewServer creates a new SOCKS5 server.
-func NewServer(user, password string, upstream *config.UpstreamConfig, timeout time.Duration, handler ProxyHandler) *Server {
+func NewServer(user, password string, upstream *config.UpstreamConfig, timeout time.Duration, logger *log.Logger, handler ProxyHandler) *Server {
 	return &Server{
 		User:         user,
 		Password:     password,
 		Upstream:     upstream,
 		Timeout:      timeout,
+		log:          logger,
 		ProxyHandler: handler,
 	}
 }
@@ -54,14 +58,13 @@ func (s *Server) Serve(l net.Listener) error {
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
-	// Prepare connection dialer
 	dial := s.ProxyHandler.GetDialContext()
 	if dial == nil {
 		dial = (&net.Dialer{}).DialContext
 	}
 
-	session := NewSession(conn, s, dial)
+	session := NewSession(conn, s.log, s, dial)
 	if err := session.Handle(); err != nil {
-		// Optional logging
+		s.log.Printf("SOCKS5 session error: %v\n", err)
 	}
 }

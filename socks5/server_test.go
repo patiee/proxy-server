@@ -20,6 +20,7 @@ import (
 
 	"github.com/patiee/proxy/cert"
 	phttp "github.com/patiee/proxy/http"
+	plog "github.com/patiee/proxy/log"
 	"github.com/patiee/proxy/socks5"
 )
 
@@ -77,7 +78,7 @@ func TestSOCKS5Server_HTTP(t *testing.T) {
 
 	// 2. Setup SOCKS5 Server and ProxyHandler
 	transport := &http.Transport{}
-	handler := phttp.NewProxyHandler(nil, transport)
+	handler := phttp.NewProxyHandler(nil, transport, plog.DefaultLogger())
 
 	filterCalled := false
 	handler.RequestFilters = append(handler.RequestFilters, func(r *http.Request) error {
@@ -86,7 +87,7 @@ func TestSOCKS5Server_HTTP(t *testing.T) {
 		return nil
 	})
 
-	server := socks5.NewServer("", "", nil, 10*time.Second, handler)
+	server := socks5.NewServer("", "", nil, 10*time.Second, plog.DefaultLogger(), handler)
 
 	// Start SOCKS5 Listener
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -148,7 +149,7 @@ func TestSOCKS5Server_HTTPS(t *testing.T) {
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
-	handler := phttp.NewProxyHandler(certManager, transport)
+	handler := phttp.NewProxyHandler(certManager, transport, plog.DefaultLogger())
 	handler.InsecureSkipVerify = true // For backend connection
 
 	filterCalled := false
@@ -158,7 +159,7 @@ func TestSOCKS5Server_HTTPS(t *testing.T) {
 		return nil
 	})
 
-	server := socks5.NewServer("", "", nil, 10*time.Second, handler)
+	server := socks5.NewServer("", "", nil, 10*time.Second, plog.DefaultLogger(), handler)
 
 	// Start SOCKS5 Listener
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -213,8 +214,8 @@ func TestSOCKS5Server_Auth(t *testing.T) {
 	pass := "pass"
 
 	transport := &http.Transport{}
-	handler := phttp.NewProxyHandler(nil, transport)
-	server := socks5.NewServer(user, pass, nil, 10*time.Second, handler)
+	handler := phttp.NewProxyHandler(nil, transport, plog.DefaultLogger())
+	server := socks5.NewServer(user, pass, nil, 10*time.Second, plog.DefaultLogger(), handler)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

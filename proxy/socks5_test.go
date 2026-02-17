@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/patiee/proxy/config"
+	plog "github.com/patiee/proxy/log"
 	proxy "github.com/patiee/proxy/proxy"
 )
 
@@ -25,7 +26,7 @@ func TestSOCKS5Configuration(t *testing.T) {
 		},
 	}
 
-	proxyServer, err := proxy.NewProxyServer(conf)
+	proxyServer, err := proxy.NewProxyServer(conf, plog.DefaultLogger())
 	if err != nil {
 		t.Fatalf("Failed to create proxy server with SOCKS5 upstream: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestSOCKS5Integration(t *testing.T) {
 			Timeout: 5 * time.Second,
 		},
 	}
-	proxyServer, err := proxy.NewProxyServer(conf)
+	proxyServer, err := proxy.NewProxyServer(conf, plog.DefaultLogger())
 	if err != nil {
 		t.Fatalf("Failed to create proxy server: %v", err)
 	}

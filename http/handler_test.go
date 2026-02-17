@@ -13,11 +13,12 @@ import (
 	"github.com/patiee/proxy/config"
 	"github.com/patiee/proxy/errors"
 	proxyhttp "github.com/patiee/proxy/http"
+	plog "github.com/patiee/proxy/log"
 )
 
 func TestProxyHeaders(t *testing.T) {
 	defaultVia := "1.1 8080"
-	customVia := "proxy-server-v1.0.0 1.1.1.1:8080"
+	customVia := "proxy-server-v1.0.0 127.0.0.1:8080"
 
 	// Define a custom filter function
 	addHeaderFilter := func(r *http.Request) error {
@@ -229,7 +230,7 @@ func TestProxyHeaders(t *testing.T) {
 				transport.Proxy = http.ProxyURL(tt.upstreamConfig.URL)
 			}
 
-			handler := proxyhttp.NewProxyHandler(nil, transport)
+			handler := proxyhttp.NewProxyHandler(nil, transport, plog.DefaultLogger())
 			handler.Via = tt.viaConfig
 
 			for _, filter := range tt.filterConfigs {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/patiee/proxy/config"
 	"github.com/patiee/proxy/errors"
+	plog "github.com/patiee/proxy/log"
 	proxy "github.com/patiee/proxy/proxy"
 )
 
@@ -47,7 +48,8 @@ func main() {
 	}
 
 	// Create Proxy Server
-	p, err := proxy.NewProxyServer(config)
+	log := plog.DefaultLogger()
+	p, err := proxy.NewProxyServer(config, log)
 	if err != nil {
 		log.Fatalf("Failed to create proxy server: %v", err)
 	}
@@ -56,7 +58,7 @@ func main() {
 	p.AddRequestFilter(xffFilter)
 	p.AddRequestFilter(blockReddit)
 
-	log.Printf("Starting proxy server on port %s with X-Forwarded-For filter", config.Port)
+	log.Printf("Starting proxy server on port :%s with X-Forwarded-For filter", config.Port)
 	if err := http.ListenAndServe(":"+config.Port, p); err != nil {
 		log.Fatalf("Failed to start proxy server: %v", err)
 	}

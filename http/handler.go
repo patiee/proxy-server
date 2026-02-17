@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -21,6 +22,7 @@ type ProxyHandler struct {
 	InsecureSkipVerify bool
 	Via                *string
 	Timeout            time.Duration
+	log                *log.Logger
 
 	CertManager *cert.CertificateManager
 	Transport   *http.Transport
@@ -60,10 +62,11 @@ func (h *ProxyHandler) GetRootCAs() *x509.CertPool {
 }
 
 // NewProxyHandler creates a new ProxyHandler.
-func NewProxyHandler(certManager *cert.CertificateManager, transport *http.Transport) *ProxyHandler {
+func NewProxyHandler(certManager *cert.CertificateManager, transport *http.Transport, logger *log.Logger) *ProxyHandler {
 	return &ProxyHandler{
 		CertManager: certManager,
 		Transport:   transport,
+		log:         logger,
 	}
 }
 
@@ -72,7 +75,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 1. Apply RequestFilters (for ALL methods)
 	for _, f := range h.RequestFilters {
 		if err := f(r); err != nil {
-			fmt.Printf("Filter error: %v\n", err)
+			h.log.Printf("Filter error: %v\n", err)
 			if b, ok := err.(*errors.BlockedRequestError); ok {
 				http.Error(w, fmt.Sprintf("Request Forbidden: %s", b.Message), http.StatusForbidden)
 			} else {
@@ -173,7 +176,7 @@ func (h *ProxyHandler) handleMITM(w http.ResponseWriter, r *http.Request) {
 	}
 	tlsClientConn := tls.Server(clientConn, tlsConfig)
 	if err := tlsClientConn.Handshake(); err != nil {
-		fmt.Printf("MITM Handshake error: %v\n", err)
+		h.log.Printf("MITM Handshake error: %v\n", err)
 		clientConn.Close()
 		return
 	}
@@ -193,7 +196,7 @@ func (h *ProxyHandler) handleMITM(w http.ResponseWriter, r *http.Request) {
 	// For now, standard net.Dial and tls.Client
 	rawDestConn, err := net.Dial("tcp", destAddr)
 	if err != nil {
-		fmt.Printf("MITM Destination dial error: %v\n", err)
+		h.log.Printf("MITM Destination dial error: %v\n", err)
 		return
 	}
 
@@ -213,7 +216,7 @@ func (h *ProxyHandler) handleMITM(w http.ResponseWriter, r *http.Request) {
 
 	tlsDestConn := tls.Client(rawDestConn, destTLSConfig)
 	if err := tlsDestConn.Handshake(); err != nil {
-		fmt.Printf("MITM Destination Handshake error: %v\n", err)
+		h.log.Printf("MITM Destination Handshake error: %v\n", err)
 		rawDestConn.Close()
 		return
 	}

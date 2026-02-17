@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/patiee/proxy/config"
 	"github.com/patiee/proxy/errors"
+	plog "github.com/patiee/proxy/log"
 	proxy "github.com/patiee/proxy/proxy"
 )
 
@@ -25,7 +25,8 @@ func main() {
 	}
 
 	// Create Proxy Server
-	p, err := proxy.NewProxyServer(conf)
+	log := plog.DefaultLogger()
+	p, err := proxy.NewProxyServer(conf, log)
 	if err != nil {
 		log.Fatalf("Failed to create proxy server: %v", err)
 	}
@@ -48,10 +49,10 @@ func main() {
 
 	listener, err := net.Listen("tcp", ":"+conf.Port)
 	if err != nil {
-		log.Fatalf("Failed to listen on port %s: %v", conf.Port, err)
+		log.Fatalf("Failed to listen on port :%s: %v", conf.Port, err)
 	}
 
-	fmt.Printf("SOCKS5 Proxy Server running on port %s\n", conf.Port)
+	log.Printf("SOCKS5 Proxy Server running on port :%s\n", conf.Port)
 	if err := p.ServeSOCKS5(listener); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}

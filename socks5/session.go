@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"time"
 )
@@ -13,17 +14,20 @@ import (
 // Session handles a single SOCKS5 connection session.
 type Session struct {
 	conn   net.Conn
-	server *Server
+	log    *log.Logger
 	reader *bufio.Reader
-	Dial   func(ctx context.Context, network, addr string) (net.Conn, error)
+	server *Server
+
+	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // NewSession creates a new SOCKS5 session.
-func NewSession(conn net.Conn, server *Server, dial func(ctx context.Context, network, addr string) (net.Conn, error)) *Session {
+func NewSession(conn net.Conn, logger *log.Logger, server *Server, dial func(ctx context.Context, network, addr string) (net.Conn, error)) *Session {
 	return &Session{
 		conn:   conn,
-		server: server,
+		log:    logger,
 		reader: bufio.NewReader(conn),
+		server: server,
 		Dial:   dial,
 	}
 }
@@ -33,7 +37,7 @@ func (s *Session) Handle() error {
 	defer s.conn.Close()
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("SOCKS5 Session Panic: %v\n", r)
+			s.log.Printf("SOCKS5 Session Panic: %v\n", r)
 		}
 	}()
 

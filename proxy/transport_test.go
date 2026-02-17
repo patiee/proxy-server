@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/patiee/proxy/config"
+	plog "github.com/patiee/proxy/log"
 	proxy "github.com/patiee/proxy/proxy"
 )
 
@@ -13,7 +14,7 @@ func TestTransportModification(t *testing.T) {
 	c := &config.Config{
 		Port: "8080",
 	}
-	p, err := proxy.NewProxyServer(c)
+	p, err := proxy.NewProxyServer(c, plog.DefaultLogger())
 	if err != nil {
 		t.Fatalf("Failed to create proxy: %v", err)
 	}

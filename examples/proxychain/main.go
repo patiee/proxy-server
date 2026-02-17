@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/patiee/proxy/config"
+	plog "github.com/patiee/proxy/log"
 	proxy "github.com/patiee/proxy/proxy"
 )
 
@@ -31,12 +32,13 @@ func main() {
 	// Create new proxy server with upstream configuration
 	// Create Proxy Server
 	// The implementation now uses ProxyServer from server/http
-	p, err := proxy.NewProxyServer(conf) // Changed from server.NewProxyServer to proxy.NewProxyServer and variable name from proxy to p
+	log := plog.DefaultLogger()
+	p, err := proxy.NewProxyServer(conf, log)
 	if err != nil {
 		log.Fatalf("Failed to create proxy server: %v", err)
 	}
 
-	log.Printf("Starting proxy server on port %s, forwarding to %v", conf.Port, conf.Upstream)
+	log.Printf("Starting proxy server on port :%s, forwarding to %v", conf.Port, conf.Upstream)
 	if err := http.ListenAndServe(":"+conf.Port, p); err != nil { // Changed proxy to p
 		log.Fatalf("Failed to start proxy server: %v", err)
 	}

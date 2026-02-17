@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -22,6 +23,7 @@ type ProxyServer struct {
 	upstream           *config.UpstreamConfig
 	timeout            time.Duration
 	InsecureSkipVerify bool
+	log                *log.Logger
 
 	Socks5User     string
 	Socks5Password string
@@ -39,11 +41,12 @@ type ProxyServer struct {
 }
 
 // NewProxyServer creates a new ProxyServer.
-func NewProxyServer(conf *config.Config) (*ProxyServer, error) {
+func NewProxyServer(conf *config.Config, logger *log.Logger) (*ProxyServer, error) {
 	p := &ProxyServer{
 		port:     conf.Port,
 		via:      conf.Via,
 		upstream: conf.Upstream,
+		log:      logger,
 	}
 
 	if conf.Socks5 != nil {
@@ -148,7 +151,7 @@ func NewProxyServer(conf *config.Config) (*ProxyServer, error) {
 	}
 
 	// Initialize HTTP Handler
-	p.Handler = phttp.NewProxyHandler(p.CertManager, p.Transport)
+	p.Handler = phttp.NewProxyHandler(p.CertManager, p.Transport, p.log)
 	p.Handler.Via = p.via
 	p.Handler.InsecureSkipVerify = p.InsecureSkipVerify
 	p.Handler.Timeout = p.timeout
@@ -158,7 +161,7 @@ func NewProxyServer(conf *config.Config) (*ProxyServer, error) {
 	if conf.Socks5 != nil && conf.Socks5.Timeout != nil && *conf.Socks5.Timeout > 0 {
 		socks5Timeout = time.Duration(*conf.Socks5.Timeout) * time.Second
 	}
-	p.Socks5 = socks5.NewServer(p.Socks5User, p.Socks5Password, p.upstream, socks5Timeout, p.Handler)
+	p.Socks5 = socks5.NewServer(p.Socks5User, p.Socks5Password, p.upstream, socks5Timeout, p.log, p.Handler)
 
 	return p, nil
 }
